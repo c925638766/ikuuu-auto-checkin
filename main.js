@@ -71,22 +71,17 @@ async function dumpResponse(tag, accountName, response) {
 }
 
 async function safeJson(tag, accountName, response) {
-  const ct = response.headers.get("content-type") || "";
   // 先把响应转储出来（不管成功失败都落盘）
-  const { bodyText } = await dumpResponse(tag, accountName, response);
+  const { ct, bodyText } = await dumpResponse(tag, accountName, response);
 
-  // 如果不是 JSON，直接报错：告诉你是 HTML/重定向/风控页
-  if (!ct.includes("application/json")) {
-    throw new Error(
-      `服务端返回非 JSON（content-type=${ct || "unknown"}），很可能是登录页/风控页/重定向页。已保存 logs 响应文件。`
-    );
-  }
-
+  // 关键：不要依赖 content-type，先尝试 JSON.parse
   try {
     return JSON.parse(bodyText);
   } catch (e) {
+    // 解析失败时再提示：通常是 HTML（<!DOCTYPE ...）/风控/重定向页
+    const head = bodyText.slice(0, 120).replace(/\s+/g, " ");
     throw new Error(
-      `JSON 解析失败：${e?.message || e}。已保存 logs 响应文件。`
+      `返回体不是合法 JSON（content-type=${ct || "unknown"}，body head="${head}"）。已保存 logs 响应文件。原始错误：${e?.message || e}`
     );
   }
 }
@@ -136,14 +131,23 @@ async function logIn(account) {
 
   const responseJson = await safeJson("login", account.name, response);
 
-  // 取 cookie（Node fetch 对 set-cookie 支持因版本不同；保留你原来的思路）
-  // 如果你原来用的是 response.headers.getSetCookie()，也可以继续用
-  const setCookie = response.headers.get("set-cookie");
-  if (!setCookie) {
-    // 仍然不算致命，但提示你看看 logs
+  const setCookies = typeof response.headers.getSetCookie === "function"
+    ? response.headers.getSetCookie()
+    : [];
+  
+  if (!setCookies || setCookies.length === 0) {
+    // 兼容兜底：某些环境只有 get("set-cookie")
+    const one = response.headers.get("set-cookie");
+    if (one) setCookies.push(one);
+  }
+  
+  if (!setCookies || setCookies.length === 0) {
     console.log(`${account.name}: 未拿到 set-cookie（可能是风控/重定向）。请查看 logs 文件。`);
   } else {
-    account.cookie = formatCookie([setCookie]);
+    account.cookie = formatCookie(setCookies);
+    // 打印一下 cookie 的键名帮助排查（不泄露值）
+    const cookieKeys = account.cookie.split(";").map(x => x.split("=")[0].trim()).filter(Boolean);
+    console.log(`${account.name}: cookie keys = ${cookieKeys.join(", ")}`);
   }
 
   return responseJson;
