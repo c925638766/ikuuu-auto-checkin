@@ -44,3 +44,11 @@ jobs:
             ${{ steps.checkin.outputs.result  }}
 
             [任务详情](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+      - name: Upload logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkin-logs
+          path: logs
+          if-no-files-found: ignore
